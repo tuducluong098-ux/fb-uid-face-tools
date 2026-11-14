@@ -19,8 +19,10 @@ import {
   Archive,
   Layers,
   ArrowRight,
+  ShieldCheck,
 } from 'lucide-react';
 import JSZip from 'jszip';
+import { TwoFactorAuth } from './components/TwoFactorAuth';
 
 interface UidResult {
   uid: string;
@@ -57,7 +59,7 @@ https://facebook.com/zuck
 61550000000001`;
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'uid' | 'face'>('uid');
+  const [activeTab, setActiveTab] = useState<'uid' | '2fa' | 'face'>('2fa');
 
   // ===================== TAB 1: CHECK LIVE UID =====================
   const [rawInput, setRawInput] = useState('');
@@ -281,16 +283,16 @@ export default function Home() {
               </span>
             </div>
             <p className="text-xs sm:text-sm text-slate-400">
-              Check Live UID Facebook (Nhớ tự động) &amp; Tải ảnh mặt AI (ThisPersonDoesNotExist)
+              Check Live UID (Nhớ tự động) · Lấy mã 2FA đếm ngược · Tải ảnh mặt AI
             </p>
           </div>
         </div>
 
         {/* TAB SWITCHER */}
-        <div className="flex items-center p-1 bg-black/40 border border-white/10 rounded-xl self-start sm:self-auto">
+        <div className="flex items-center p-1 bg-black/40 border border-white/10 rounded-xl self-start sm:self-auto flex-wrap gap-1">
           <button
             onClick={() => setActiveTab('uid')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
               activeTab === 'uid'
                 ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
@@ -300,8 +302,19 @@ export default function Home() {
             <span>Check Live UID</span>
           </button>
           <button
+            onClick={() => setActiveTab('2fa')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+              activeTab === '2fa'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Get Code 2FA</span>
+          </button>
+          <button
             onClick={() => setActiveTab('face')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
               activeTab === 'face'
                 ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
@@ -672,7 +685,10 @@ https://facebook.com/1000123456789
         </div>
       )}
 
-      {/* ===================== TAB 2: TẢI ẢNH MẶT AI ===================== */}
+      {/* ===================== TAB 2: GET CODE 2FA ===================== */}
+      {activeTab === '2fa' && <TwoFactorAuth />}
+
+      {/* ===================== TAB 3: TẢI ẢNH MẶT AI ===================== */}
       {activeTab === 'face' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* CỘT TRÁI: ẢNH HIỆN TẠI (KÉO & TẢI 1-CLICK) */}
