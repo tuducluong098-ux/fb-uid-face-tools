@@ -13,7 +13,7 @@ interface CheckResult {
 // Kiểm tra 1 UID qua Graph API Picture (không cần access token)
 async function checkSingleUid(uid: string): Promise<CheckResult> {
   const cleanUid = uid.trim().replace(/\D/g, '');
-  if (!cleanUid || cleanUid.length < 4) {
+  if (!cleanUid) {
     return { uid, status: 'die', message: 'UID không hợp lệ' };
   }
 
@@ -106,10 +106,10 @@ export async function POST(req: NextRequest) {
       .map((item) => {
         if (typeof item !== 'string') return '';
         // Hỗ trợ dạng: uid|pass|2fa, url facebook.com/123456, hoặc thuần số
-        const match = item.match(/(\d{4,})/);
+        const match = item.match(/(\d+)/);
         return match ? match[1] : item.trim();
       })
-      .filter((uid) => uid.length >= 4);
+      .filter((uid) => uid.length >= 1);
 
     // Loại bỏ UID trùng lặp trong 1 lần check
     const uniqueUids = Array.from(new Set(uidsToProcess)).slice(0, 500); // Giới hạn tối đa 500 UID/lần
