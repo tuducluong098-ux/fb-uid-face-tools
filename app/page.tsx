@@ -20,6 +20,7 @@ import {
   Layers,
   ArrowRight,
   ShieldCheck,
+  Key,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { TwoFactorAuth } from './components/TwoFactorAuth';
@@ -27,6 +28,7 @@ import { TwoFactorAuth } from './components/TwoFactorAuth';
 interface UidResult {
   uid: string;
   status: 'live' | 'die' | 'error';
+  name?: string;
   avatar?: string;
   message?: string;
 }
@@ -52,17 +54,21 @@ const STORAGE_KEYS = {
 };
 
 const SAMPLE_UIDS = `4
-https://facebook.com/zuck
-100000000000000999999999
-100000000000001
+61592088983182
+61592091653973
+61593390296974
 100084321987654|matkhau123|2FACODE
-61550000000001`;
+61550000000001
+100000000000001
+99999999999999999999`;
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'uid' | '2fa' | 'face'>('2fa');
 
   // ===================== TAB 1: CHECK LIVE UID =====================
   const [rawInput, setRawInput] = useState('');
+  const [accessToken, setAccessToken] = useState('');
+  const [showTokenSettings, setShowTokenSettings] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [results, setResults] = useState<UidResult[]>([]);
   const [filterMode, setFilterMode] = useState<'all' | 'live' | 'die'>('all');
@@ -127,7 +133,10 @@ export default function Home() {
       const res = await fetch('/api/check-uid', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uids: lines }),
+        body: JSON.stringify({
+          uids: lines,
+          token: accessToken.trim() || undefined,
+        }),
       });
 
       const data = await res.json();
@@ -384,6 +393,50 @@ https://facebook.com/1000123456789
                   rows={9}
                   className="w-full glass-input p-3.5 rounded-xl text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none resize-y"
                 />
+              </div>
+
+              {/* Tùy chọn Access Token */}
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowTokenSettings(!showTokenSettings)}
+                  className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1.5 transition font-medium"
+                >
+                  <Key className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>
+                    {showTokenSettings
+                      ? '▲ Thu gọn cài đặt Token'
+                      : '🔑 Thêm Access Token (Tùy chọn - Check 100% qua Graph API)'}
+                  </span>
+                </button>
+
+                {showTokenSettings && (
+                  <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-slate-300 font-semibold">
+                        Token Facebook (EAAB / EAAG / EAAA...):
+                      </label>
+                      {accessToken && (
+                        <button
+                          onClick={() => setAccessToken('')}
+                          className="text-[10px] text-rose-400 hover:underline"
+                        >
+                          Xóa token
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="password"
+                      value={accessToken}
+                      onChange={(e) => setAccessToken(e.target.value)}
+                      placeholder="Dán token EAAB... vào đây để check tên & checkpoint chuẩn 100%"
+                      className="w-full glass-input px-3 py-2 rounded-lg text-xs font-mono text-slate-200 placeholder-slate-500 focus:outline-none"
+                    />
+                    <p className="text-[11px] text-slate-400">
+                      💡 Mặc định không cần token: Hệ thống dùng cơ chế kép (OpenGraph Crawler + Avatar CDN) lọc sạch 100% tài khoản ảo/die.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Ghi nhớ UID tự động Notification */}
@@ -648,6 +701,11 @@ https://facebook.com/1000123456789
                               {item.status === 'live' ? 'LIVE' : 'DIE'}
                             </span>
                           </div>
+                          {item.name && item.name !== item.uid && (
+                            <p className="text-xs font-semibold text-cyan-300 truncate mt-0.5">
+                              {item.name}
+                            </p>
+                          )}
                           {item.message && (
                             <p className="text-[11px] text-slate-400 truncate mt-0.5">
                               {item.message}

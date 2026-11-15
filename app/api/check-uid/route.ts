@@ -3,73 +3,199 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-interface CheckResult {
+export interface CheckResult {
   uid: string;
   status: 'live' | 'die' | 'error';
+  name?: string;
   avatar?: string;
   message?: string;
 }
 
-// Kiểm tra 1 UID qua Graph API Picture (không cần access token)
-async function checkSingleUid(uid: string): Promise<CheckResult> {
-  const cleanUid = uid.trim().replace(/\D/g, '');
-  if (!cleanUid) {
-    return { uid, status: 'die', message: 'UID không hợp lệ' };
+// Chuẩn hóa input (hỗ trợ UID số, url facebook.com/..., hoặc định dạng uid|pass|2fa...)
+function extractTarget(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  // 1. Tách định dạng uid|pass|2fa...
+  const firstPart = trimmed.split('|')[0].trim();
+
+  // 2. URL facebook.com/profile.php?id=12345
+  const profileIdMatch = firstPart.match(/[?&]id=(\d+)/i);
+  if (profileIdMatch) return profileIdMatch[1];
+
+  // 3. URL facebook.com/username hoặc /123456
+  const urlMatch = firstPart.match(
+    /(?:https?:\/\/)?(?:www\.|m\.|touch\.)?facebook\.com\/(?:people\/[^\/]+\/(\d+)|profile\.php\?id=(\d+)|([a-zA-Z0-9._-]+))/i
+  );
+  if (urlMatch) {
+    const id = urlMatch[1] || urlMatch[2] || urlMatch[3];
+    if (
+      id &&
+      !['home', 'login', 'recover', 'watch', 'groups', 'marketplace'].includes(
+        id.toLowerCase()
+      )
+    ) {
+      return id;
+    }
   }
 
-  try {
-    const url = `https://graph.facebook.com/${cleanUid}/picture?type=normal`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+  // 4. Nếu là chuỗi số thuần
+  const digitsOnly = firstPart.replace(/\D/g, '');
+  if (digitsOnly.length >= 1) return digitsOnly;
 
-    const res = await fetch(url, {
-      method: 'GET',
+  return firstPart;
+}
+
+// Kiểm tra với Access Token (nếu người dùng cung cấp)
+async function checkWithToken(target: string, token: string): Promise<CheckResult> {
+  try {
+    const url = `https://graph.facebook.com/v19.0/${target}?fields=id,name,picture.type(large)&access_token=${encodeURIComponent(
+      token
+    )}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const data = await res.json();
+
+    if (data.id && data.name) {
+      return {
+        uid: data.id || target,
+        status: 'live',
+        name: data.name,
+        avatar: data.picture?.data?.url,
+        message: 'Hoạt động (Xác thực qua Token)',
+      };
+    }
+
+    if (data.error) {
+      const code = data.error.code;
+      const subcode = data.error.error_subcode;
+      if (code === 190) {
+        return {
+          uid: target,
+          status: 'error',
+          message: 'Access Token không hợp lệ hoặc đã hết hạn',
+        };
+      }
+      if (subcode === 459 || subcode === 460 || subcode === 463) {
+        return {
+          uid: target,
+          status: 'die',
+          message: 'Tài khoản bị Checkpoint (Khóa 956/282)',
+        };
+      }
+      return {
+        uid: target,
+        status: 'die',
+        message: data.error.message || 'Tài khoản không tồn tại hoặc đã khóa',
+      };
+    }
+
+    return { uid: target, status: 'die', message: 'Không thể truy vấn UID' };
+  } catch {
+    return { uid: target, status: 'die', message: 'Hết thời gian chờ Graph API' };
+  }
+}
+
+// Kiểm tra không cần token (Dual-Check: OpenGraph Crawler + Graph CDN Avatar)
+async function checkAnonymous(target: string): Promise<CheckResult> {
+  const isNumeric = /^\d+$/.test(target);
+
+  try {
+    // Luồng 1: OpenGraph Scraper Crawler để lấy Title và xác minh profile
+    const profileUrl = isNumeric
+      ? `https://www.facebook.com/profile.php?id=${target}`
+      : `https://www.facebook.com/${target}`;
+
+    const ogPromise = fetch(profileUrl, {
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
       },
-      redirect: 'manual',
-      signal: controller.signal,
-    });
+      signal: AbortSignal.timeout(5000),
+      redirect: 'follow',
+    })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const text = await res.text();
+        const titleMatch = text.match(/<title[^>]*>([^<]+)<\/title>/i);
+        const title = titleMatch ? titleMatch[1].trim() : '';
+        return { title };
+      })
+      .catch(() => null);
 
-    clearTimeout(timeout);
+    // Luồng 2: Graph API Picture CDN Check (đối với UID số)
+    const picPromise = isNumeric
+      ? fetch(
+          `https://graph2.facebook.com/v3.3/${target}/picture?type=large&redirect=0`,
+          {
+            signal: AbortSignal.timeout(4000),
+          }
+        )
+          .then(async (res) => {
+            if (!res.ok) return null;
+            return await res.json();
+          })
+          .catch(() => null)
+      : Promise.resolve(null);
 
-    // Khi live: FB trả HTTP 301/302 Redirect sang CDN ảnh scontent...
-    if (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307) {
-      const location = res.headers.get('location') || '';
+    const [ogResult, picResult] = await Promise.all([ogPromise, picPromise]);
+
+    const title = ogResult?.title || '';
+    const avatarUrl = picResult?.data?.url || '';
+
+    // Kiểm tra xem avatar có phải CDN scontent thật không hay là ảnh silhouette rỗng (static.xx.fbcdn.net hoặc rsrc.php)
+    const hasScontentAvatar =
+      avatarUrl.includes('scontent') &&
+      !avatarUrl.includes('rsrc.php') &&
+      !avatarUrl.includes('static.xx.fbcdn.net');
+
+    // Title kiểm tra
+    const isInvalidTitle =
+      !title ||
+      title.toLowerCase() === 'facebook' ||
+      title.toLowerCase().includes('log in') ||
+      title.toLowerCase().includes('đăng nhập') ||
+      title.toLowerCase().includes('error') ||
+      title.toLowerCase().includes('content not found') ||
+      title.toLowerCase().includes('nội dung không tìm thấy');
+
+    if (!isInvalidTitle) {
       return {
-        uid: cleanUid,
+        uid: target,
         status: 'live',
-        avatar: location || url,
+        name: title,
+        avatar: hasScontentAvatar ? avatarUrl : undefined,
+        message: 'Hoạt động (Đã xác minh profile)',
       };
     }
 
-    // Nếu trả 200 trực tiếp (một số proxy hoặc response)
-    if (res.ok) {
+    if (hasScontentAvatar) {
       return {
-        uid: cleanUid,
+        uid: target,
         status: 'live',
-        avatar: url,
+        name: 'Người dùng Facebook',
+        avatar: avatarUrl,
+        message: 'Hoạt động (Avatar CDN khả dụng)',
       };
     }
 
-    // HTTP 400 Bad Request: "Unsupported head request. Object with ID does not exist" -> Die
     return {
-      uid: cleanUid,
+      uid: target,
       status: 'die',
-      message: 'Tài khoản không tồn tại hoặc đã bị khóa',
+      message: 'Tài khoản không tồn tại, đã bị khóa (checkpoint) hoặc bị xóa',
     };
   } catch (err: unknown) {
     const isAbort = (err as { name?: string })?.name === 'AbortError';
     return {
-      uid: cleanUid,
+      uid: target,
       status: 'die',
       message: isAbort ? 'Hết thời gian phản hồi (Timeout)' : 'Lỗi kết nối Facebook',
     };
   }
 }
 
-// Hàm chia mảng theo lô để kiểm tra đồng thời (concurrency)
+// Hàm chia mảng theo lô để kiểm tra đồng thời
 async function runConcurrent<T, R>(
   items: T[],
   limit: number,
@@ -93,6 +219,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const rawList: string[] = Array.isArray(body?.uids) ? body.uids : [];
+    const token: string = typeof body?.token === 'string' ? body.token.trim() : '';
 
     if (rawList.length === 0) {
       return NextResponse.json(
@@ -103,16 +230,11 @@ export async function POST(req: NextRequest) {
 
     // Lọc và chuẩn hóa UID
     const uidsToProcess = rawList
-      .map((item) => {
-        if (typeof item !== 'string') return '';
-        // Hỗ trợ dạng: uid|pass|2fa, url facebook.com/123456, hoặc thuần số
-        const match = item.match(/(\d+)/);
-        return match ? match[1] : item.trim();
-      })
+      .map(extractTarget)
       .filter((uid) => uid.length >= 1);
 
     // Loại bỏ UID trùng lặp trong 1 lần check
-    const uniqueUids = Array.from(new Set(uidsToProcess)).slice(0, 500); // Giới hạn tối đa 500 UID/lần
+    const uniqueUids = Array.from(new Set(uidsToProcess)).slice(0, 300); // Tối đa 300 UID/lần
 
     if (uniqueUids.length === 0) {
       return NextResponse.json(
@@ -121,8 +243,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Chạy song song tối đa 10 luồng để vừa nhanh vừa không bị FB chặn IP
-    const results = await runConcurrent(uniqueUids, 10, checkSingleUid);
+    // Chạy song song tối đa 8 luồng
+    const checkFn = (target: string) =>
+      token ? checkWithToken(target, token) : checkAnonymous(target);
+
+    const results = await runConcurrent(uniqueUids, 8, checkFn);
 
     const liveCount = results.filter((r) => r.status === 'live').length;
     const dieCount = results.filter((r) => r.status === 'die').length;
