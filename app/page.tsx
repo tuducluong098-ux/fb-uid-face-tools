@@ -63,7 +63,7 @@ const SAMPLE_UIDS = `4
 99999999999999999999`;
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'uid' | '2fa' | 'face'>('2fa');
+  const [activeTab, setActiveTab] = useState<'uid' | '2fa' | 'face'>('uid');
 
   // ===================== TAB 1: CHECK LIVE UID =====================
   const [rawInput, setRawInput] = useState('');
